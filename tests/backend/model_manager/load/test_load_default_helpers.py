@@ -60,6 +60,25 @@ class TestResolveSubmodelPath:
 
         assert resolved == Path("/models/pipeline/clip_encoder")
 
+    def test_it_rebases_a_component_discovered_in_the_install_staging_directory(self, tmp_path: Path) -> None:
+        """Remote installs probe in ``tmpinstall_*`` before moving the pipeline into its final directory."""
+        staging_root = tmp_path / "tmpinstall_download"
+        staged_component = staging_root / "clip_encoder"
+        staged_component.mkdir(parents=True)
+        discovered_path = staged_component.as_posix()
+
+        installed_root = tmp_path / "installed"
+        staging_root.rename(installed_root)
+        installed_component = installed_root / "clip_encoder"
+        config = SimpleNamespace(
+            path=installed_root.as_posix(),
+            submodels={SubModelType.TextEncoder: SimpleNamespace(path_or_prefix=discovered_path)},
+        )
+
+        resolved = resolve_submodel_path(config, SubModelType.TextEncoder, installed_root / "text_encoder")
+
+        assert resolved == installed_component
+
     def test_it_falls_back_when_the_slot_was_not_discovered(self) -> None:
         """Configs persisted before submodel discovery existed carry no map."""
         fallback = Path("/models/pipeline/text_encoder")
