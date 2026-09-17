@@ -2,7 +2,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from invokeai.app.invocations.math import AddInvocation, RandomIntInvocation
 from invokeai.app.services.board_records.board_records_common import BoardVisibility
+from invokeai.app.services.shared.graph import Edge, EdgeConnection, Graph, GraphExecutionState
 from invokeai.app.services.shared.invocation_context import ImagesInterface
 
 
@@ -135,3 +137,62 @@ def test_image_save_allows_active_queue_user_without_board() -> None:
     images.save(MagicMock())
 
     services.images.create.assert_called_once()
+
+
+def test_image_save_graph_records_resolved_runtime_inputs() -> None:
+    graph = Graph()
+    graph.add_node(RandomIntInvocation(id="random", low=17, high=18))
+    graph.add_node(AddInvocation(id="add", b=1))
+    graph.add_edge(
+        Edge(
+            source=EdgeConnection(node_id="random", field="value"),
+            destination=EdgeConnection(node_id="add", field="a"),
+        )
+    )
+    session = GraphExecutionState(graph=graph)
+
+    random_node = session.next()
+    assert isinstance(random_node, RandomIntInvocation)
+    session.complete(random_node.id, random_node.invoke(MagicMock()))
+    runtime_add_node = session.next()
+    assert isinstance(runtime_add_node, AddInvocation)
+    assert runtime_add_node.a == 17
+
+    services = MagicMock()
+    services.configuration.multiuser = False
+    data = MagicMock()
+    data.queue_item.user_id = "queue-user"
+    data.queue_item.workflow = None
+    data.queue_item.session = session
+    data.queue_item.session_id = "session"
+    data.invocation = runtime_add_node
+    images = ImagesInterface(services, data, MagicMock())
+
+    images.save(MagicMock())
+
+    saved_graph_json = services.images.create.call_args.kwargs["graph"]
+    saved_graph = Graph.model_validate_json(saved_graph_json)
+    saved_add_node = next(node for node in saved_graph.nodes.values() if isinstance(node, AddInvocation))
+    assert saved_add_node.a == 17
+
+
+def test_image_save_graph_falls_back_to_source_graph_before_materialization() -> None:
+    graph = Graph()
+    graph.add_node(AddInvocation(id="add", a=2, b=3))
+    session = GraphExecutionState(graph=graph)
+
+    services = MagicMock()
+    services.configuration.multiuser = False
+    data = MagicMock()
+    data.queue_item.user_id = "queue-user"
+    data.queue_item.workflow = None
+    data.queue_item.session = session
+    data.queue_item.session_id = "session"
+    data.invocation = graph.nodes["add"]
+    images = ImagesInterface(services, data, MagicMock())
+
+    images.save(MagicMock())
+
+    saved_graph_json = services.images.create.call_args.kwargs["graph"]
+    saved_graph = Graph.model_validate_json(saved_graph_json)
+    assert saved_graph.nodes["add"] == graph.nodes["add"]

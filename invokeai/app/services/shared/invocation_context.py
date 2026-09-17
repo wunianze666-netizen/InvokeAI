@@ -251,7 +251,9 @@ class ImagesInterface(InvocationContextInterface):
             workflow_ = self._data.queue_item.workflow.model_dump_json()
 
         graph_ = None
-        if self._data.queue_item.session.graph:
+        if self._data.queue_item.session.execution_graph.nodes:
+            graph_ = self._data.queue_item.session.execution_graph.model_dump_json()
+        elif self._data.queue_item.session.graph:
             graph_ = self._data.queue_item.session.graph.model_dump_json()
 
         return self._services.images.create(
