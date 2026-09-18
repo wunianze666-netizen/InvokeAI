@@ -143,10 +143,17 @@ def test_image_save_graph_records_resolved_runtime_inputs() -> None:
     graph = Graph()
     graph.add_node(RandomIntInvocation(id="random", low=17, high=18))
     graph.add_node(AddInvocation(id="add", b=1))
+    graph.add_node(AddInvocation(id="downstream", b=2))
     graph.add_edge(
         Edge(
             source=EdgeConnection(node_id="random", field="value"),
             destination=EdgeConnection(node_id="add", field="a"),
+        )
+    )
+    graph.add_edge(
+        Edge(
+            source=EdgeConnection(node_id="add", field="value"),
+            destination=EdgeConnection(node_id="downstream", field="a"),
         )
     )
     session = GraphExecutionState(graph=graph)
@@ -172,8 +179,13 @@ def test_image_save_graph_records_resolved_runtime_inputs() -> None:
 
     saved_graph_json = services.images.create.call_args.kwargs["graph"]
     saved_graph = Graph.model_validate_json(saved_graph_json)
-    saved_add_node = next(node for node in saved_graph.nodes.values() if isinstance(node, AddInvocation))
+    saved_add_node = saved_graph.nodes[next(iter(session.source_prepared_mapping["add"]))]
+    assert isinstance(saved_add_node, AddInvocation)
     assert saved_add_node.a == 17
+    assert saved_graph == session.execution_graph
+    assert len(saved_graph.nodes) == 3
+    assert len(saved_graph.edges) == 2
+    assert graph.nodes["add"].a == 0
 
 
 def test_image_save_graph_falls_back_to_source_graph_before_materialization() -> None:
