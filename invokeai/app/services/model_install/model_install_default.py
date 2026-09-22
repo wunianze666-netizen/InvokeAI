@@ -460,7 +460,10 @@ class ModelInstallService(ModelInstallServiceBase):
         config = config or ModelRecordChanges()
         info: AnyModelConfig = self._probe(Path(model_path), config)  # type: ignore
 
-        dest_dir = self.app_config.models_path / info.key
+        models_path = self.app_config.models_path.resolve()
+        dest_dir = (models_path / info.key).resolve()
+        if not dest_dir.is_relative_to(models_path):
+            raise ValueError(f"Cannot install model outside the models directory: {dest_dir}")
         try:
             if dest_dir.exists():
                 raise FileExistsError(

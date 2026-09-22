@@ -104,6 +104,25 @@ def test_install(
     assert model_record.source == embedding_file.as_posix()
 
 
+def test_install_rejects_model_key_outside_models_path(
+    mm2_installer: ModelInstallServiceBase,
+    embedding_file: Path,
+    mm2_app_config: InvokeAIAppConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert isinstance(mm2_installer, ModelInstallService)
+    outside_dir = mm2_app_config.models_path.parent / "escaped-model"
+    malicious_info = SimpleNamespace(key=str(Path("..") / outside_dir.name))
+    monkeypatch.setattr(mm2_installer, "_probe", lambda *_args, **_kwargs: malicious_info)
+    monkeypatch.setattr(mm2_installer, "_register", lambda *_args, **_kwargs: malicious_info.key)
+
+    with pytest.raises(ValueError, match="outside the models directory"):
+        mm2_installer.install_path(embedding_file)
+
+    assert embedding_file.exists()
+    assert not outside_dir.exists()
+
+
 def test_rename(
     mm2_installer: ModelInstallServiceBase, embedding_file: Path, mm2_app_config: InvokeAIAppConfig
 ) -> None:
