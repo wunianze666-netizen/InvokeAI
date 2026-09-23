@@ -5,6 +5,7 @@ Test the model installer
 import gc
 import platform
 import shutil
+import subprocess
 import threading
 import time
 import uuid
@@ -121,6 +122,38 @@ def test_install_rejects_model_key_outside_models_path(
 
     assert embedding_file.exists()
     assert not outside_dir.exists()
+
+
+def test_install_rejects_model_key_through_symlinked_directory(
+    mm2_installer: ModelInstallServiceBase,
+    embedding_file: Path,
+    mm2_app_config: InvokeAIAppConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert isinstance(mm2_installer, ModelInstallService)
+    outside_dir = mm2_app_config.models_path.parent / "outside-models"
+    outside_dir.mkdir()
+    linked_dir = mm2_app_config.models_path / "linked-outside"
+    try:
+        linked_dir.symlink_to(outside_dir, target_is_directory=True)
+    except OSError as exc:
+        if OS != "Windows":
+            pytest.skip(f"Directory symlinks are not supported in this test environment: {exc}")
+        junction = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(linked_dir), str(outside_dir)], capture_output=True, text=True
+        )
+        if junction.returncode != 0:
+            pytest.skip(f"Directory links are not supported in this test environment: {junction.stderr}")
+
+    malicious_info = SimpleNamespace(key=str(Path(linked_dir.name) / "escaped-model"))
+    monkeypatch.setattr(mm2_installer, "_probe", lambda *_args, **_kwargs: malicious_info)
+    monkeypatch.setattr(mm2_installer, "_register", lambda *_args, **_kwargs: malicious_info.key)
+
+    with pytest.raises(ValueError, match="outside the models directory"):
+        mm2_installer.install_path(embedding_file)
+
+    assert embedding_file.exists()
+    assert not (outside_dir / "escaped-model").exists()
 
 
 def test_rename(
