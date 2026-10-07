@@ -1,4 +1,5 @@
 import os
+import tempfile
 import threading
 import time
 from contextlib import contextmanager
@@ -600,21 +601,19 @@ class ImageIndexService(ImageIndexServiceBase):
 
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
-            # Written aside and renamed: two processes sharing a db_dir can
-            # first-run at once, and a kill mid-write would otherwise leave
-            # a truncated archive that costs another full re-embed.
-            #
-            # The staging name has to end in `.npz` because np.savez appends
-            # that extension to any path that lacks it: written as `.tmp`,
-            # the archive landed at `.tmp.npz` and the rename below then
-            # failed on the `.tmp` that was never created. The failure was
-            # swallowed by the handler, so the cache never reached disk and
-            # every restart re-embedded the whole vocabulary (minutes,
-            # during which cluster labels are unavailable) while leaking one
-            # orphaned staging file per run.
-            staging_path = cache_path.with_name(f"{cache_path.name}.{os.getpid()}.tmp.npz")
-            np.savez(staging_path, embeddings=embeddings, fingerprint=np.str_(fingerprint))
-            os.replace(staging_path, cache_path)
+            # Exclusively created beside the destination: PIDs can collide
+            # across containers, and another filesystem would prevent replace.
+            staging_file = tempfile.NamedTemporaryFile(
+                mode="wb", dir=cache_path.parent, prefix=f"{cache_path.name}.", suffix=".tmp.npz", delete=False
+            )
+            try:
+                with staging_file:
+                    # A file handle avoids np.savez's implicit filename suffix.
+                    np.savez(staging_file, embeddings=embeddings, fingerprint=np.str_(fingerprint))
+                # Windows requires the staging handle to be closed before rename.
+                os.replace(staging_file.name, cache_path)
+            finally:
+                Path(staging_file.name).unlink(missing_ok=True)
         except Exception:
             # With the exception, not just the path. The caller caches the
             # matrix in RAM either way, so a write failure costs
